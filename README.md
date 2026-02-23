@@ -96,3 +96,17 @@ If you find our codebase helpful, please star our project and cite our paper:
 
 ## Contact
 - sanqingqu@gmail.com or 2011444@tongji.edu.cn
+
+---
+
+# LEAD-
+
+在开始前我先说一下我的复现大致历程吧，年前的时间，继续在本机上进行Pythorch的训练及数据复现，在Google Colab上进行计图的复现，
+为了防止断掉，其实我也准备在本机上做，年后继续在Colab上跑，中间断了一次，但是pro的计算单元已经不够再跑一次了，我就临时在本机上
+跑复现了，这里有两个问题，一个是计图好像不适配Mac，所以我对计图编译器那部分的代码做了一定的调整，最后可以跑，另一问题是计图不支
+持MPS（MacBook的GPU），也就是说只能用CPU跑，也就是对于一些epch长的我需要缩短它的epoch，但是很显然，这样的复现也只能证明其可
+以跑得通，其数据其实是没有价值的，我在这里放的数据也就只供参考了
+
+至于对编译代码的改动后的版本，我后续看看整理出来
+
+至于一些还要说的，大概就是，基于想要从头训练来说，一块GPU还是相对吃力并且不保险的
