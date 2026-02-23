@@ -137,3 +137,12 @@ wandb
 # checkpoints
 # checkpoints_sfda
 *.pth
+# Large files and data
+visda_train.tar
+2403.03421v1.pdf
+*.tar
+*.tar.gz
+data/
+checkpoints/
+jittor_version/checkpoints/
+.DS_Store

@@ -1,6 +1,9 @@
 import os
-import faiss
-import torch 
+import torch
+import torch.multiprocessing
+torch.multiprocessing.set_sharing_strategy('file_system')
+if not torch.cuda.is_available():
+    torch.multiprocessing.set_start_method('fork', force=True)
 import shutil 
 import numpy as np
 
@@ -10,7 +13,7 @@ from dataset.dataset import SFUniDADataset
 from torch.utils.data.dataloader import DataLoader
 
 from config.model_config import build_args
-from utils.net_utils import set_logger, set_random_seed
+from utils.net_utils import set_logger, set_random_seed, get_device
 from utils.net_utils import compute_h_score, Entropy
 
 from sklearn.metrics import confusion_matrix
@@ -43,6 +46,7 @@ def obtain_LEAD_pseudo_labels(args, model, dataloader, epoch_idx=0.0):
     pred_cls_bank = []
     gt_label_bank = []
     embed_feat_bank = []
+    device = get_device()
     
     class_list = args.target_class_list
     
@@ -50,11 +54,11 @@ def obtain_LEAD_pseudo_labels(args, model, dataloader, epoch_idx=0.0):
     
     for _, imgs_test, imgs_label, _ in tqdm(dataloader, ncols=60):
         
-        imgs_test = imgs_test.cuda()
+        imgs_test = imgs_test.to(device)
         embed_feat, pred_cls = model(imgs_test, apply_softmax=True)
         pred_cls_bank.append(pred_cls)
         embed_feat_bank.append(embed_feat)
-        gt_label_bank.append(imgs_label.cuda())
+        gt_label_bank.append(imgs_label.to(device))
     
     pred_cls_bank = torch.cat(pred_cls_bank, dim=0) #[N, C]
     gt_label_bank = torch.cat(gt_label_bank, dim=0) #[N]
@@ -122,7 +126,7 @@ def obtain_LEAD_pseudo_labels(args, model, dataloader, epoch_idx=0.0):
     unknown_proj_feat_expand = unknwon_proj_feat.unsqueeze(0).expand([args.class_num, -1, -1]) #[C, N, D]
     
     unknown_space_norm_gm = GaussianMixture(n_components=2, random_state=0).fit(unknown_proj_norm.cpu().view(-1, 1))
-    gaussian_two_mus = torch.tensor(unknown_space_norm_gm.means_).squeeze().cuda()
+    gaussian_two_mus = torch.tensor(unknown_space_norm_gm.means_, dtype=torch.float32).squeeze().to(device)
 
     gaussian_mu1 = torch.min(gaussian_two_mus)
     gaussian_mu2 = torch.max(gaussian_two_mus)
@@ -179,7 +183,7 @@ def obtain_LEAD_pseudo_labels(args, model, dataloader, epoch_idx=0.0):
     psd_label_onehot = torch.zeros_like(pred_cls_bank).scatter_(1, psd_label_oh.unsqueeze(1), 1.0) #[N, C]
     psd_label_onehot[psd_unknown_flg, :] = 1.0
     psd_label_onehot = psd_label_onehot / (torch.sum(psd_label_onehot, dim=-1, keepdim=True) + 1e-5) #[N, C]
-    psd_label_onehot = psd_label_onehot.cuda()
+    psd_label_onehot = psd_label_onehot.to(device)
     
     per_class_num = np.zeros((len(class_list)))
     pre_class_num = np.zeros_like(per_class_num)
@@ -208,6 +212,7 @@ def train(args, model, train_dataloader, test_dataloader, optimizer, epoch_idx=0
     psd_label_onehot_bank, pred_cls_bank, embed_feat_bank,\
     known_space_basis, unknown_space_basis, psd_unknown_bank, psd_label_weight_bank = obtain_LEAD_pseudo_labels(args, model, test_dataloader, epoch_idx=epoch_idx)
     model.train()
+    device = get_device()
 
     local_KNN = 4
     all_pred_loss_stack = []
@@ -220,8 +225,8 @@ def train(args, model, train_dataloader, test_dataloader, optimizer, epoch_idx=0
     for imgs_train, _, imgs_label, imgs_idx in tqdm(train_dataloader, ncols=60):
         
         iter_idx += 1
-        imgs_idx = imgs_idx.cuda()
-        imgs_train = imgs_train.cuda()
+        imgs_idx = imgs_idx.to(device)
+        imgs_train = imgs_train.to(device)
         
         psd_label = psd_label_onehot_bank[imgs_idx] #[B, C]
         psd_weight = psd_label_weight_bank[imgs_idx].unsqueeze(1) #[B, 1]
@@ -294,7 +299,7 @@ def test(args, model, dataloader, src_flg=False):
     
     for _, imgs_test, imgs_label, _ in tqdm(dataloader, ncols=60):
         
-        imgs_test = imgs_test.cuda() 
+        imgs_test = imgs_test.to(get_device()) 
         _, pred_cls = model(imgs_test, apply_softmax=True)
         gt_label_stack.append(imgs_label)
         pred_cls_stack.append(pred_cls.cpu())
@@ -309,10 +314,12 @@ def main(args):
     
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
     this_dir = os.path.join(os.path.dirname(__file__), ".")
+    device = get_device()
+    print(f"Using device: {device}")
     
     model = SFUniDA(args)
     
-    model = model.cuda()
+    model = model.to(device)
 
     if args.note is None:
         save_dir = os.path.join(this_dir, "checkpoints", args.dataset, "s_{}_t_{}".format(args.s_idx, args.t_idx),
@@ -332,7 +339,7 @@ def main(args):
         raise ValueError
     
     if args.checkpoint is not None and os.path.isfile(args.checkpoint):
-        checkpoint = torch.load(args.checkpoint, map_location=torch.device("cpu"))
+        checkpoint = torch.load(args.checkpoint, map_location=torch.device("cpu"), weights_only=False)
         model.load_state_dict(checkpoint["model_state_dict"])
     else:
         print(args.checkpoint)

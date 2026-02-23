@@ -3,13 +3,22 @@ import sys
 import logging 
 
 import torch 
-import faiss 
+# import faiss  # Not used in this file, commented out for macOS compatibility
 import random 
 
 import numpy as np 
 import torch.nn as nn 
 import torch.nn.functional as F 
 from tqdm import tqdm 
+
+def get_device():
+    """Get the best available device (CUDA > MPS > CPU)"""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        return torch.device("mps")
+    else:
+        return torch.device("cpu")
 
 def set_random_seed(seed=0):
     
@@ -20,8 +29,9 @@ def set_random_seed(seed=0):
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
         
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
 
 def Entropy(input_):
     bs = input_.size(0)

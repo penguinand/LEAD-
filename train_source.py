@@ -1,6 +1,10 @@
 import os
 import shutil
 import torch
+import torch.multiprocessing
+torch.multiprocessing.set_sharing_strategy('file_system')
+if not torch.cuda.is_available():
+    torch.multiprocessing.set_start_method('fork', force=True)
 import numpy as np 
 from tqdm import tqdm 
 from model.SFUniDA import SFUniDA 
@@ -8,7 +12,7 @@ from dataset.dataset import SFUniDADataset
 from torch.utils.data.dataloader import DataLoader 
 
 from config.model_config import build_args
-from utils.net_utils import set_logger, set_random_seed
+from utils.net_utils import set_logger, set_random_seed, get_device
 from utils.net_utils import compute_h_score, CrossEntropyLabelSmooth
 
 def op_copy(optimizer):
@@ -28,6 +32,7 @@ def lr_scheduler(optimizer, iter_num, max_iter, gamma=10, power=0.75):
 def train(args, model, dataloader, criterion, optimizer, epoch_idx=0.0):
     model.train()
     loss_stack = []
+    device = get_device()
     
     iter_idx = epoch_idx * len(dataloader)
     iter_max = args.epochs * len(dataloader)
@@ -35,8 +40,8 @@ def train(args, model, dataloader, criterion, optimizer, epoch_idx=0.0):
     for imgs_train, _, imgs_label, _ in tqdm(dataloader, ncols=60):
         
         iter_idx += 1
-        imgs_train = imgs_train.cuda()
-        imgs_label = imgs_label.cuda()
+        imgs_train = imgs_train.to(device)
+        imgs_label = imgs_label.to(device)
         
         _, pred_cls = model(imgs_train, apply_softmax=True)
         imgs_onehot_label = torch.zeros_like(pred_cls).scatter(1, imgs_label.unsqueeze(1), 1)
@@ -59,6 +64,7 @@ def test(args, model, dataloader, src_flg=True):
     model.eval()
     gt_label_stack = []
     pred_cls_stack = []
+    device = get_device()
     
     if src_flg:
         class_list = args.source_class_list
@@ -69,7 +75,7 @@ def test(args, model, dataloader, src_flg=True):
     
     for _, imgs_test, imgs_label, _ in tqdm(dataloader, ncols=60):
         
-        imgs_test = imgs_test.cuda()
+        imgs_test = imgs_test.to(device)
         _, pred_cls = model(imgs_test, apply_softmax=True)
         gt_label_stack.append(imgs_label)
         pred_cls_stack.append(pred_cls.cpu())
@@ -86,11 +92,13 @@ def main(args):
     
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
     this_dir = os.path.join(os.path.dirname(__file__), ".")
+    device = get_device()
+    print(f"Using device: {device}")
     
     model = SFUniDA(args)
     if args.checkpoint is not None and os.path.isfile(args.checkpoint):
         save_dir = os.path.dirname(args.checkpoint)
-        checkpoint = torch.load(args.checkpoint, map_location=torch.device("cpu"))
+        checkpoint = torch.load(args.checkpoint, map_location=torch.device("cpu"), weights_only=False)
         model.load_state_dict(checkpoint["model_state_dict"])
     else:
         save_dir = os.path.join(this_dir, "checkpoints", args.dataset, "source_{}".format(args.s_idx),
@@ -99,7 +107,7 @@ def main(args):
         if not os.path.isdir(save_dir):
             os.makedirs(save_dir)
             
-    model.cuda()
+    model.to(device)
     args.save_dir = save_dir 
     # shutil.copy("./train_source.py", os.path.join(args.save_dir, "train_source.py"))
     

@@ -23,7 +23,7 @@ vgg_dict = {"vgg11":models.vgg11, "vgg13":models.vgg13,
 class VGGBase(nn.Module):
   def __init__(self, vgg_name):
     super(VGGBase, self).__init__()
-    model_vgg = vgg_dict[vgg_name](pretrained=True)
+    model_vgg = vgg_dict[vgg_name](weights="IMAGENET1K_V1")
     self.features = model_vgg.features
     self.classifier = nn.Sequential()
     for i in range(6):
@@ -45,7 +45,7 @@ res_dict = {"resnet18":models.resnet18, "resnet34":models.resnet34,
 class ResBase(nn.Module):
     def __init__(self, res_name):
         super(ResBase, self).__init__()
-        model_resnet = res_dict[res_name](pretrained=True)
+        model_resnet = res_dict[res_name](weights="IMAGENET1K_V1")
         self.conv1 = model_resnet.conv1
         self.bn1 = model_resnet.bn1
         self.relu = model_resnet.relu
