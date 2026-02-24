@@ -155,15 +155,55 @@
 - **OfficeHome OPDA**: 已完成10/12对，平均H-score 74.1% vs 论文75.0%(全12对)，接近论文结果
 - **VisDA OPDA**: H-score 73.5% vs 论文76.6%，差距-3.1%
 
-### 3.2 计图 (Jittor) 复现分析
+### 3.2 计图编译器适配 — macOS ARM 修复
+
+Jittor v1.3.10 在 macOS ARM64 (Apple Silicon) 上无法直接运行，根本原因是其 JIT 编译器在生成算子注册表 `data.cc` 时，使用了指向成员函数的指针 (PMF) 强制转换：
+
+```cpp
+(void(*)(Node*)) &Node::forward   // ❌ macOS clang 严格模式下非法
+```
+
+macOS ARM64 的 clang 严格遵循 C++ 标准，禁止 PMF → 普通函数指针的不安全转换，导致编译直接报错。
+
+**修改方案**（修改文件：`site-packages/jittor/compiler.py` 第1363-1389行，共新增27行）：
+
+1. 使用 `clang -E` 预处理源码，得到展开后的 `.pp.cc` 文件
+2. 注入基于 union 类型双关的安全转换模板函数：
+   ```cpp
+   template<typename To, typename From>
+   To unsafe_pmf_cast(From f) { union { From from; To to; } u; u.from = f; return u.to; }
+   ```
+3. 用正则表达式替换所有 PMF 强转：
+   ```
+   (void(*)(Node*))&Node::xx → unsafe_pmf_cast<void(*)(Node*)>(&Node::xx)
+   ```
+4. 编译修改后的预处理文件，清理临时文件
+5. 仅在 `platform.system() == 'Darwin'` 时触发，不影响 Linux/Windows 平台
+
+### 3.3 PyTorch → 计图 代码移植关键差异
+
+| 改动项 | PyTorch 写法 | Jittor 适配写法 | 说明 |
+|--------|-------------|----------------|------|
+| 模型前向传播 | `forward(self, x)` | `execute(self, x)` | Jittor 约定 |
+| 权重归一化 | `nn.utils.weight_norm()` | 手写 `WeightNormLinear` 类 | Jittor 无内置，手动实现 g·v/‖v‖ |
+| 线性层计算 | `F.linear(x, w, b)` | `matmul_transpose(x, w) + b` | 矩阵转置乘法替代 |
+| 反向传播 | `loss.backward(); optim.step()` | `optimizer.step(loss)` | 一步完成自动微分 |
+| 冻结参数 | `requires_grad_(False)` | `v.stop_grad()` | 梯度阻断方式不同 |
+| 数据集 | `torch.utils.data.Dataset` | `jt.dataset.Dataset` + `set_attrs()` | 内置 DataLoader 功能 |
+| 图像归一化 | `transforms.Normalize()` | `jt.transform.ImageNormalize()` | API 名称不同 |
+| 随机种子 | `torch.manual_seed()` | `jt.set_global_seed()` | 统一全局随机种子 |
+| 设备管理 | `cuda / mps / cpu` | 自动管理（仅 CPU/CUDA） | Jittor 不支持 MPS |
+| 检查点 | `.pth` (torch.save) | `.pkl` + `load_pytorch_weights()` | 可桥接加载 PyTorch 权重 |
+
+### 3.4 计图 (Jittor) 复现分析
 
 - 目前仅完成 Office-31 OPDA 的 A→D (62.4%) 和 A→W (49.9%) 两对实验
 - 结果与论文/PyTorch版本差距较大，可能原因：
-  1. Jittor与PyTorch在随机数生成、BatchNorm行为等方面存在差异
-  2. MPS后端在Jittor上的兼容性问题
+  1. Jittor 仅支持 CPU 运行（不支持 Mac MPS），训练 epoch 不足
+  2. Jittor 与 PyTorch 在随机数生成、BatchNorm 行为等方面存在差异
   3. 训练可能尚未收敛（部分实验仍在进行中）
 
-### 3.3 总体结论
+### 3.5 总体结论
 
 1. **PyTorch版本复现成功**: Office-31三个场景的平均结果与论文差距均在3%以内，OSDA和PDA几乎完全复现
 2. **OfficeHome和VisDA结果接近论文**: 在已完成的实验中，复现结果与论文基本一致
