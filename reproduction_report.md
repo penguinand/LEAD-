@@ -155,9 +155,13 @@
 - **OfficeHome OPDA**: 已完成10/12对，平均H-score 74.1% vs 论文75.0%(全12对)，接近论文结果
 - **VisDA OPDA**: H-score 73.5% vs 论文76.6%，差距-3.1%
 
-### 3.2 计图编译器适配 — macOS ARM 修复
+### 3.2 计图编译器适配 — macOS ARM 三处修复
 
-Jittor v1.3.10 在 macOS ARM64 (Apple Silicon) 上无法直接运行，根本原因是其 JIT 编译器在生成算子注册表 `data.cc` 时，使用了指向成员函数的指针 (PMF) 强制转换：
+Jittor v1.3.10 在 macOS ARM64 (Apple Silicon) 上无法直接编译运行，需要对底层 C++/Python 编译代码做 3 处修改（共约31行改动）。修改位置均在 `site-packages/jittor/` 下。
+
+#### 修复 ❶：compiler.py — PMF 指针强转修复（+27行）
+
+Jittor JIT 编译器在生成算子注册表 `data.cc` 时，使用了指向成员函数的指针 (PMF) 强制转换：
 
 ```cpp
 (void(*)(Node*)) &Node::forward   // ❌ macOS clang 严格模式下非法
@@ -165,7 +169,7 @@ Jittor v1.3.10 在 macOS ARM64 (Apple Silicon) 上无法直接运行，根本原
 
 macOS ARM64 的 clang 严格遵循 C++ 标准，禁止 PMF → 普通函数指针的不安全转换，导致编译直接报错。
 
-**修改方案**（修改文件：`site-packages/jittor/compiler.py` 第1363-1389行，共新增27行）：
+**修改方案**（`compiler.py` 第1363-1389行）：
 
 1. 使用 `clang -E` 预处理源码，得到展开后的 `.pp.cc` 文件
 2. 注入基于 union 类型双关的安全转换模板函数：
@@ -179,6 +183,32 @@ macOS ARM64 的 clang 严格遵循 C++ 标准，禁止 PMF → 普通函数指�
    ```
 4. 编译修改后的预处理文件，清理临时文件
 5. 仅在 `platform.system() == 'Darwin'` 时触发，不影响 Linux/Windows 平台
+
+#### 修复 ❷：src/opt/expr.h — std::move 限定修复（2处改动）
+
+macOS clang 要求 `move()` 必须带 `std::` 前缀，否则 ADL (Argument Dependent Lookup) 查找失败：
+
+```cpp
+// 原始（Linux GCC可通过，macOS clang 报错）：
+children.emplace_back(move(c));
+return make(str, move(children));
+
+// 修改后：
+children.emplace_back(std::move(c));
+return make(str, std::move(children));
+```
+
+影响 JIT 表达式树构建的 `make_op` 模板函数。
+
+#### 修复 ❸：src/misc/stack_vector.h — 缺失 at() 方法补全（+2行）
+
+`StackVector` 类只有 `operator[]` 而无 `at()` 方法，macOS 标准库某些代码路径会调用 `at()` 导致编译错误：
+
+```cpp
+// 新增两行：
+inline const T& at(int i) const { return a[i]; }
+inline T& at(int i) { return a[i]; }
+```
 
 ### 3.3 PyTorch → 计图 代码移植关键差异
 
